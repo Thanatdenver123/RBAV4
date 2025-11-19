@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RBA - ระบบห้องสอบออนไลน์</title>
+    
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.3.2/papaparse.min.js"></script>
+    
+    <style>
+        body { font-family: 'Sarabun', 'Inter', sans-serif; background-color: #f3f4f6; }
+        .page { display: none; animation: fadeIn 0.4s ease-out; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
+        
+        /* Interactive Grid */
+        .cell-empty { background-color: #f3f4f6; }
+        .cell-doing { background-color: #fbbf24; color: white; } /* Yellow (Current) */
+        .cell-done { background-color: #94a3b8; color: white; } /* Gray (Done/Hidden) */
+        .cell-correct { background-color: #22c55e; color: white; } /* Green */
+        .cell-wrong { background-color: #ef4444; color: white; } /* Red */
+
+        /* Toggle Switch */
+        .toggle-checkbox:checked { right: 0; border-color: #68D391; }
+        .toggle-checkbox:checked + .toggle-label { background-color: #68D391; }
+        
+        /* Loading */
+        #loading-overlay {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(255, 255, 255, 0.95); z-index: 9999;
+            display: flex; justify-content: center; align-items: center; flex-direction: column;
+        }
+        .spinner { border: 4px solid #e5e7eb; border-top: 4px solid #3b82f6; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+        /* Modal */
+        #message-modal {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0, 0, 0, 0.6); z-index: 10000;
+            display: none; justify-content: center; align-items: center;
+        }
+    </style>
+</head>
+<body class="text-gray-800">
+
+    <div id="app" class="w-full max-w-6xl mx-auto p-4 min-h-screen flex flex-col">
+
+        <!-- Loading -->
+        <div id="loading-overlay">
+            <div class="spinner mb-4"></div>
+            <p class="text-gray-600 font-medium">กำลังเชื่อมต่อ...</p>
+            <p class="text-xs text-gray-400 mt-2">v4.0 Realtime</p>
+        </div>
+        
+        <!-- Modal -->
+        <div id="message-modal">
+            <div class="bg-white rounded-lg shadow-xl p-6 w-full max-w-md text-center mx-4">
+                <div id="modal-icon" class="text-4xl mb-4">⚠️</div>
+                <h3 id="modal-title" class="text-xl font-bold mb-2">แจ้งเตือน</h3>
+                <p id="modal-message" class="text-gray-600 mb-6 text-sm"></p>
+                <button id="modal-close-btn" class="w-full bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 transition">ตกลง</button>
+            </div>
+        </div>
+
+        <!-- 1. Home -->
+        <div id="page-home" class="page m-auto bg-white p-8 rounded-xl shadow-lg text-center max-w-2xl w-full mt-10">
+            <h1 class="text-3xl font-bold text-blue-700 mb-2">RBA Online Exam</h1>
+            <p class="text-gray-500 mb-8">ระบบสอบออนไลน์แบบ Real-time Interactive</p>
+            <div class="flex flex-col sm:flex-row gap-4 justify-center">
+                <button id="btn-go-teacher" class="bg-blue-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-blue-700 shadow-md transition">สำหรับครู</button>
+                <button id="btn-go-student" class="bg-green-600 text-white px-8 py-3 rounded-lg font-semibold hover:bg-green-700 shadow-md transition">สำหรับนักเรียน</button>
+            </div>
+        </div>
+
+        <!-- 2. Teacher Dashboard -->
+        <div id="page-teacher-dashboard" class="page w-full bg-white rounded-xl shadow-lg overflow-hidden flex flex-col h-[90vh]">
+            <div class="p-4 bg-gray-50 border-b flex flex-wrap justify-between items-center gap-4">
+                <div>
+                    <h2 class="text-xl font-bold text-blue-800">ห้องสอบ RBA Monitor</h2>
+                    <p class="text-sm text-gray-500">นักเรียน: <span id="student-count" class="font-bold">0</span> คน</p>
+                </div>
+                <div class="flex gap-2">
+                    <button id="btn-toggle-system" class="px-4 py-2 rounded text-white text-sm font-bold shadow transition bg-gray-500">Loading...</button>
+                    <button onclick="window.location.reload()" class="px-3 py-2 rounded bg-gray-200 hover:bg-gray-300 text-gray-700 text-sm">ออก</button>
+                </div>
+            </div>
+
+            <!-- Controls -->
+            <div class="p-4 bg-white border-b flex flex-wrap gap-4 items-center text-sm">
+                <div class="flex items-center gap-2 border-r pr-4">
+                    <span class="text-gray-600">แสดงชื่อ:</span>
+                    <input type="checkbox" id="toggle-names" class="w-4 h-4 accent-blue-600" checked>
+                </div>
+                <div class="flex items-center gap-2 border-r pr-4">
+                    <span class="text-gray-600 font-bold">เฉลยคำตอบ:</span>
+                    <input type="checkbox" id="toggle-answers" class="w-5 h-5 accent-green-600"> <!-- Default OFF -->
+                </div>
+                <div class="flex-1"></div>
+                <button id="btn-dl-excel" class="bg-green-600 text-white px-3 py-1.5 rounded hover:bg-green-700">📥 Excel</button>
+                <button id="btn-clear-db" class="bg-red-100 text-red-600 px-3 py-1.5 rounded hover:bg-red-200">🗑️ ล้างระบบ</button>
+            </div>
+
+            <!-- Grid -->
+            <div class="flex-1 overflow-auto p-4 bg-gray-100">
+                <div class="bg-white rounded shadow overflow-hidden">
+                    <table class="w-full text-left border-collapse">
+                        <thead class="bg-gray-200 sticky top-0 z-10 text-xs uppercase text-gray-700">
+                            <tr>
+                                <th class="p-3 border-b w-10 text-center">#</th>
+                                <th class="p-3 border-b w-48">ชื่อ-สกุล</th>
+                                <th class="p-3 border-b w-24 text-center">สถานะ</th>
+                                <th class="p-3 border-b w-16 text-center">%</th>
+                                <!-- Q1-Q15 Headers generated by JS -->
+                            </tr>
+                        </thead>
+                        <tbody id="grid-body" class="text-sm divide-y divide-gray-100"></tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- 3. Student Login -->
+        <div id="page-student-login" class="page m-auto bg-white p-8 rounded-xl shadow-lg max-w-md w-full mt-10">
+            <h2 class="text-2xl font-bold text-center text-green-700 mb-6">เข้าห้องสอบ</h2>
+            <div class="space-y-4">
+                <div>
+                    <label class="block text-sm font-medium text-gray-700 mb-1">รหัสประจำตัว</label>
+                    <input type="text" id="student-id" class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none text-center text-lg" placeholder="เช่น 66001">
+                </div>
+                <div id="student-preview" class="hidden bg-green-50 p-3 rounded text-center border border-green-200">
+                    <p class="font-bold text-green-800" id="preview-name"></p>
+                    <p class="text-xs text-green-600" id="preview-dept"></p>
+                </div>
+                <button id="btn-student-login" class="w-full bg-green-600 text-white px-4 py-3 rounded-lg font-bold hover:bg-green-700 transition shadow-lg">เริ่มทำข้อสอบ</button>
+                <button onclick="location.reload()" class="w-full text-gray-400 text-sm hover:text-gray-600 mt-2">ยกเลิก</button>
+            </div>
+        </div>
+
+        <!-- 4. Student Exam (Step-by-Step) -->
+        <div id="page-student-exam" class="page m-auto bg-white w-full max-w-2xl rounded-xl shadow-xl overflow-hidden mt-4 flex flex-col h-[85vh]">
+            <!-- Header -->
+            <div class="bg-green-600 p-4 text-white flex justify-between items-center">
+                <div>
+                    <h2 class="text-lg font-bold">ข้อสอบ RBA</h2>
+                    <p class="text-xs opacity-80" id="exam-student-info">กำลังโหลด...</p>
+                </div>
+                <div class="text-right">
+                    <span class="text-2xl font-bold" id="q-current">1</span><span class="text-sm opacity-70">/15</span>
+                </div>
+            </div>
+
+            <!-- Question Area -->
+            <div class="flex-1 p-6 overflow-y-auto flex flex-col justify-center">
+                <div id="question-container" class="animate-fade-in">
+                    <p class="text-gray-500 text-sm mb-2 uppercase tracking-wide font-bold">คำถามข้อที่ <span id="q-num-display">1</span></p>
+                    <h3 class="text-xl md:text-2xl font-medium text-gray-800 mb-8 leading-relaxed" id="question-text">...</h3>
+                    
+                    <div class="space-y-3">
+                        <label class="flex items-center p-4 border-2 border-gray-200 rounded-lg cursor-pointer hover:bg-green-50 hover:border-green-300 transition group select-none" onclick="selectAnswer(true)">
+                            <div class="w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center group-hover:border-green-500 mr-4" id="radio-true"></div>
+                            <span class="text-lg font-medium text-gray-700">ถูก (True)</span>
+                        </label>
+                        
+                        <label class="flex items-center p-4 border-2 border-gray-200 rounded-lg cursor-pointer hover:bg-red-50 hover:border-red-300 transition group select-none" onclick="selectAnswer(false)">
+                            <div class="w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center group-hover:border-red-500 mr-4" id="radio-false"></div>
+                            <span class="text-lg font-medium text-gray-700">ผิด (False)</span>
+                        </label>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Navigation -->
+            <div class="p-4 bg-gray-50 border-t flex justify-between items-center">
+                <button id="btn-prev" class="px-6 py-2 rounded-lg font-medium text-gray-600 hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition" disabled>
+                    ⬅ ย้อนกลับ
+                </button>
+                
+                <!-- Dots Indicator (Mini) -->
+                <div class="hidden md:flex gap-1">
+                    <!-- JS will populate dots -->
+                    <div id="mini-dots" class="flex gap-1"></div>
+                </div>
+
+                <button id="btn-next" class="px-6 py-2 rounded-lg font-bold bg-blue-600 text-white hover:bg-blue-700 shadow-md transition">
+                    ถัดไป ➡
+                </button>
+                
+                <button id="btn-submit" class="hidden px-6 py-2 rounded-lg font-bold bg-green-600 text-white hover:bg-green-700 shadow-md transition animate-pulse">
+                    ส่งคำตอบ ✅
+                </button>
+            </div>
+        </div>
+
+        <!-- 5. Submitted -->
+        <div id="page-submitted" class="page m-auto bg-white p-10 rounded-xl shadow-lg text-center max-w-md mt-10">
+            <div class="mb-4 text-6xl">🎉</div>
+            <h2 class="text-2xl font-bold text-gray-800 mb-2">ส่งคำตอบเรียบร้อย!</h2>
+            <p class="text-gray-500">ขอบคุณที่ทำแบบทดสอบครับ</p>
+            <div class="mt-8 pt-6 border-t">
+                <button onclick="location.reload()" class="text-blue-600 hover:underline text-sm">กลับหน้าแรก</button>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Logic -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc, updateDoc, onSnapshot, collection, query, enableNetwork, writeBatch, getDocs } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyCr08U5KYGvxXu-DZ5qZOyVnU_1MJ-oY50",
+            authDomain: "rba-online-6342e.firebaseapp.com",
+            databaseURL: "https://rba-online-6342e-default-rtdb.asia-southeast1.firebasedatabase.app",
+            projectId: "rba-online-6342e",
+            storageBucket: "rba-online-6342e.firebasestorage.app",
+            messagingSenderId: "50383344070",
+            appId: "1:50383344070:web:5003afe4c5530fc1d5a2c7",
+            measurementId: "G-G75D8551FP"
+        };
+
+        const QUESTIONS = [
+            { t: "RBA (Responsible Business Alliance) คือ มาตรฐานจรรยาบรรณแห่งพันธมิตรธุรกิจผู้มีความรับผิดชอบ", a: true },
+            { t: "CORPORATE CODE OF CONDUCT คือ ข้อกําหนดด้านจริยธรรมทางธุรกิจของบริษัท", a: true },
+            { t: "ข้อกําหนดด้านจริยธรรม เป็นบทบัญญัติมาตรฐานพฤติกรรมที่ผู้บริหารและพนักงานทุกคนต้องปฏิบัติตาม", a: true },
+            { t: "บริษัทฮานาฯ นําหลักการของ RBA มาปฏิบัติในฐานะคู้ค้ากับบริษัทสมาชิก RBA", a: true },
+            { t: "องค์ประกอบของRBA มีทัง้หมด 5 ส่วน คือ มาตรฐานแรงงาน, สุขภาพและความปลอดภัย, สิ่งแวดล้อม, ระบบบริหารการจัดการ, จริยธรรมทางธุรกิจ", a: true },
+            { t: "บริษัทฮานาฯ สามารถรับพนักงานอายุตํ่ากว่า 18 ปีเข้าทํางานได้โดยไม้ผิดจรรยาบรรณ", a: false },
+            { t: "แรงงานต้องไม่มีการปฏิบัติโดยใช้ความรุนแรงหรือไร้มนุษยธรรม รวมถึงการขู่เข็ญทางจิตใจหรือร่างกาย การล่วงละเมิดทางเพศ หรือการละเมิดด้วยวาจาต่อแรงงาน", a: true },
+            { t: "หากสถานประกอบการมีความปลอดภัยและมีสภาพสิ่งแวดล้อมที่ดีพนักงานก็มีขวัญและกําลังใจในการทํางานช่วยส่งผลให้คุณภาพของสินค้าและบริการมีคุณภาพมากขึ้น", a: true },
+            { t: "สถานการณ์และเหตุการณ์ในกรณีฉุกเฉินที่อาจเกิดขึ้น ต้องได้รับการตรวจและประเมินผล", a: true },
+            { t: "บริษัทจะต้องยึดถือการปฏิบัติตามกฎหมาย ระเบียบและข้อกําหนดของลูกค้าเกี่ยวกับการห้ามหรือการจํากัดสารเฉพาะในสินค้าและการผลิต เช่นเปลี่ยนมาใช้ผลิตภัณฑ์ RoHS", a: true },
+            { t: "พนักงานทุกคนสามารถติดสินบนได้ทุกรูปแบบ หากทําให้งานสําเร็จลุล่วงไปได้", a: false },
+            { t: "บริษัทจะต้องผลิต,ส่งมอบสินค้าและบริการตรงตามความต้องการของลูกค้า", a: true },
+            { t: "พนักงานทุกคนจะต้องเคารพสิทธิเกี่ยวกับทรัพย์สินทางปัญญาของลูกค้า โดยจะต้องไม่แอบถ่ายรูปหรือนําข้อมูลลูกค้าไปเผยแพร่โดยเด็ดขาด ถือว่าผิดกฏหมายและต้องถูกลงโทษ", a: true },
+            { t: "พนักงานทุกคนจะต้องใช้ทรัพย์สินของบริษัทเพื่อประโยชน์ในการดําเนินธุรกิจของบริษัทเท่านั้น ไม่ใช่เพื่อประโยชน์ส่วนตัว", a: true },
+            { t: "บริษัทฮานาฯ มีนโยบายสนับสนุนการมีส่วนร่วมของชุมชน ส่งเสริมความสัมพันธ์ทางสังคม ช่วยการพัฒนาทางสังคมและเศรษฐกิจให้มีความเข้มแข็ง", a: true }
+        ];
+
+        const TEACHER_CODE = "RBA";
+        const SHEET_URL = "https://docs.google.com/spreadsheets/d/163RszY_6sDDQXxWiPlkw7g5HCj_U4N49H7CMCmzWPEw/export?format=csv&gid=0";
+
+        let db, auth;
+        let currentStudent = null;
+        let studentCache = null;
+        let examState = {
+            currentIdx: 0,
+            answers: new Array(QUESTIONS.length).fill(null) // [null, true, false, null...]
+        };
+        let allResults = [];
+        let showAnswers = false;
+        let showNames = true;
+
+        // Refs
+        let configRef, studentsRef;
+
+        // --- INIT ---
+        async function init() {
+            const app = initializeApp(firebaseConfig);
+            db = getFirestore(app);
+            auth = getAuth(app);
+            configRef = doc(db, 'rba_system_config', 'main');
+            studentsRef = collection(db, 'rba_students');
+
+            onAuthStateChanged(auth, (user) => {
+                if (user) {
+                    document.getElementById('loading-overlay').style.display = 'none';
+                } else {
+                    signInAnonymously(auth).catch(e => alert("Auth Error: " + e.message));
+                }
+            });
+        }
+
+        // --- NAVIGATION ---
+        const show = (id) => {
+            document.querySelectorAll('.page').forEach(el => el.style.display = 'none');
+            document.getElementById(id).style.display = 'flex'; // Use flex for centered pages
+            // Reset specifics
+            if(id === 'page-teacher-dashboard') document.getElementById(id).style.display = 'block';
+            if(id === 'page-student-exam') document.getElementById(id).style.display = 'flex';
+        };
+
+        document.getElementById('btn-go-teacher').onclick = () => show('page-teacher-login');
+        document.getElementById('btn-go-student').onclick = () => show('page-student-login');
+
+        // --- TEACHER SYSTEM ---
+        document.getElementById('btn-teacher-login').onclick = () => {
+            if(document.getElementById('teacher-room-code').value === TEACHER_CODE) {
+                show('page-teacher-dashboard');
+                initTeacherDashboard();
+            } else {
+                alert("รหัสผิด");
+            }
+        };
+
+        function initTeacherDashboard() {
+            // Setup Grid Headers
+            const thead = document.querySelector('thead tr');
+            // Clear Q cols
+            while(thead.children.length > 4) thead.removeChild(thead.lastChild);
+            
+            QUESTIONS.forEach((_, i) => {
+                const th = document.createElement('th');
+                th.className = "p-2 border-b text-center w-10 font-bold text-gray-500";
+                th.innerText = i + 1;
+                thead.appendChild(th);
+            });
+
+            // Listeners
+            onSnapshot(configRef, (snap) => {
+                const isOpen = snap.exists() ? snap.data().isOpen : false;
+                const btn = document.getElementById('btn-toggle-system');
+                btn.textContent = isOpen ? "🔴 ปิดระบบ" : "🟢 เปิดระบบ";
+                btn.className = isOpen ? "px-4 py-2 rounded text-white text-sm font-bold shadow transition bg-red-500 hover:bg-red-600" : "px-4 py-2 rounded text-white text-sm font-bold shadow transition bg-green-500 hover:bg-green-600";
+                
+                btn.onclick = async () => {
+                    await setDoc(configRef, { isOpen: !isOpen });
+                };
+            });
+
+            onSnapshot(query(studentsRef), (snap) => {
+                allResults = [];
+                snap.forEach(d => allResults.push(d.data()));
+                renderGrid();
+            });
+
+            document.getElementById('toggle-answers').onchange = (e) => { showAnswers = e.target.checked; renderGrid(); };
+            document.getElementById('toggle-names').onchange = (e) => { showNames = e.target.checked; renderGrid(); };
+        }
+
+        function renderGrid() {
+            const tbody = document.getElementById('grid-body');
+            tbody.innerHTML = '';
+            document.getElementById('student-count').innerText = allResults.length;
+
+            // Sort: Submitted first, then by ID
+            allResults.sort((a,b) => (b.status === 'submitted' ? 1 : 0) - (a.status === 'submitted' ? 1 : 0));
+
+            allResults.forEach((s, i) => {
+                const tr = document.createElement('tr');
+                tr.className = "hover:bg-gray-50 transition";
+
+                // 1. Index
+                tr.innerHTML += `<td class="p-3 border-b text-center text-gray-400">${i+1}</td>`;
+                
+                // 2. Name
+                const nameClass = s.status === 'online' ? "text-blue-600 font-medium animate-pulse" : "text-gray-800 font-medium";
+                const displayName = showNames ? s.name : `Student ${s.studentId.slice(-3)}`;
+                tr.innerHTML += `<td class="p-3 border-b"><div class="${nameClass}">${displayName}</div><div class="text-xs text-gray-400">${s.dept}</div></td>`;
+
+                // 3. Status
+                let statusBadge = "";
+                if(s.status === 'submitted') statusBadge = `<span class="px-2 py-1 rounded-full bg-green-100 text-green-700 text-xs font-bold">ส่งแล้ว</span>`;
+                else if (s.status === 'online') statusBadge = `<span class="px-2 py-1 rounded-full bg-blue-100 text-blue-700 text-xs font-bold">กำลังทำ..</span>`;
+                tr.innerHTML += `<td class="p-3 border-b text-center">${statusBadge}</td>`;
+
+                // 4. Score
+                const scoreDisplay = s.score !== null ? `${s.score}%` : "-";
+                tr.innerHTML += `<td class="p-3 border-b text-center font-bold text-gray-700">${scoreDisplay}</td>`;
+
+                // 5. Questions Grid (Realtime Dots)
+                s.answers.forEach((ans, idx) => {
+                    let cellClass = "w-6 h-6 rounded-full mx-auto border flex items-center justify-center text-[10px] font-bold transition-all duration-300 ";
+                    let content = "";
+
+                    if (ans === null) {
+                        // Not done yet
+                        cellClass += "bg-gray-100 border-gray-200";
+                    } else {
+                        // Answered
+                        if (showAnswers) {
+                            // Show Right/Wrong
+                            const isCorrect = ans === QUESTIONS[idx].a;
+                            if(isCorrect) {
+                                cellClass += "bg-green-500 border-green-600 text-white scale-110 shadow-sm";
+                                content = "✓";
+                            } else {
+                                cellClass += "bg-red-500 border-red-600 text-white scale-110 shadow-sm";
+                                content = "✕";
+                            }
+                        } else {
+                            // Hidden (Show Progress)
+                            cellClass += "bg-blue-500 border-blue-600 text-white";
+                        }
+                    }
+                    
+                    tr.innerHTML += `<td class="p-2 border-b"><div class="${cellClass}">${content}</div></td>`;
+                });
+
+                tbody.appendChild(tr);
+            });
+        }
+
+        // --- EXCEL ---
+        document.getElementById('btn-dl-excel').onclick = () => {
+            if(allResults.length === 0) return alert("ไม่มีข้อมูล");
+            const data = allResults.map((s, i) => {
+                const row = {
+                    "ลำดับ": i+1,
+                    "รหัสนักเรียน": s.studentId,
+                    "ชื่อ-สกุล": s.name,
+                    "แผนก": s.dept, // Added Dept
+                    "สถานะ": s.status,
+                    "คะแนน (%)": s.score || 0,
+                    "เวลาที่ใช้ (วิ)": s.timeTaken ? s.timeTaken.toFixed(0) : '-'
+                };
+                
+                // Add Q1-Q15 details
+                s.answers.forEach((ans, idx) => {
+                    let res = "ยังไม่ทำ";
+                    if(ans !== null) {
+                        res = (ans === QUESTIONS[idx].a) ? "ถูก" : "ผิด";
+                    }
+                    row[`ข้อ ${idx+1}`] = res;
+                });
+                
+                return row;
+            });
+            
+            const ws = XLSX.utils.json_to_sheet(data);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "Exam Results");
+            XLSX.writeFile(wb, `RBA_Report_${new Date().toLocaleDateString()}.xlsx`);
+        };
+
+        document.getElementById('btn-clear-db').onclick = async () => {
+            if(confirm("ยืนยันล้างข้อมูลทั้งหมด?")) {
+                const batch = writeBatch(db);
+                const snap = await getDocs(studentsRef);
+                snap.forEach(d => batch.delete(d.ref));
+                await batch.commit();
+                // Reset Config
+                await setDoc(configRef, { isOpen: false });
+                alert("ล้างเรียบร้อย");
+            }
+        };
+
+        // --- STUDENT SYSTEM ---
+        async function fetchStudents() {
+            if(studentCache) return studentCache;
+            try {
+                const res = await fetch(SHEET_URL);
+                const csv = await res.text();
+                return new Promise(r => Papa.parse(csv, {header:true, skipEmptyLines:true, complete: res=>r(res.data)}));
+            } catch(e) { return []; }
+        }
+
+        document.getElementById('student-id').addEventListener('input', async (e) => {
+            const id = e.target.value.trim();
+            const box = document.getElementById('student-preview');
+            if(id.length < 3) { box.classList.add('hidden'); return; }
+            
+            const list = await fetchStudents();
+            const s = list.find(x => x['รหัสประจำตัว'] == id);
+            if(s) {
+                document.getElementById('preview-name').innerText = `${s['ชื่อ']} ${s['นามสกุล']}`;
+                document.getElementById('preview-dept').innerText = s['แผนก'];
+                box.classList.remove('hidden');
+                studentCache = list; // Cache it
+            } else {
+                box.classList.add('hidden');
+            }
+        });
+
+        document.getElementById('btn-student-login').onclick = async () => {
+            const id = document.getElementById('student-id').value.trim();
+            if(!id) return alert("กรุณากรอกรหัส");
+
+            // Checks
+            const conf = await getDoc(configRef);
+            if(!conf.exists() || !conf.data().isOpen) return alert("ระบบยังไม่เปิด");
+            
+            const list = await fetchStudents();
+            const s = list.find(x => x['รหัสประจำตัว'] == id);
+            if(!s) return alert("ไม่พบข้อมูลนักเรียน");
+
+            // Init User Data
+            currentStudent = { 
+                id: s['รหัสประจำตัว'], 
+                name: `${s['ชื่อ']} ${s['นามสกุล']}`, 
+                dept: s['แผนก'],
+                startTime: Date.now() 
+            };
+
+            // ** REALTIME: Create Initial Record immediately **
+            const existing = await getDoc(doc(studentsRef, currentStudent.id));
+            if(existing.exists() && existing.data().status === 'submitted') return alert("คุณสอบไปแล้ว");
+            
+            if(!existing.exists()) {
+                 await setDoc(doc(studentsRef, currentStudent.id), {
+                    studentId: currentStudent.id,
+                    name: currentStudent.name,
+                    dept: currentStudent.dept,
+                    status: 'online',
+                    score: null,
+                    answers: new Array(QUESTIONS.length).fill(null),
+                    currentQ: 0
+                });
+            } else {
+                // Restore session if re-login
+                examState.answers = existing.data().answers;
+                examState.currentIdx = existing.data().currentQ || 0;
+            }
+
+            // UI Setup
+            document.getElementById('exam-student-info').innerText = `${currentStudent.name} (${currentStudent.dept})`;
+            setupMiniDots();
+            renderQuestion();
+            show('page-student-exam');
+        };
+
+        function setupMiniDots() {
+            const c = document.getElementById('mini-dots');
+            c.innerHTML = '';
+            QUESTIONS.forEach((_, i) => {
+                const d = document.createElement('div');
+                d.id = `dot-${i}`;
+                d.className = "w-2 h-2 rounded-full bg-gray-300 transition";
+                c.appendChild(d);
+            });
+        }
+
+        function renderQuestion() {
+            const idx = examState.currentIdx;
+            const q = QUESTIONS[idx];
+            
+            // Update UI
+            document.getElementById('q-current').innerText = idx + 1;
+            document.getElementById('q-num-display').innerText = idx + 1;
+            document.getElementById('question-text').innerText = q.t;
+            
+            // Buttons Logic
+            document.getElementById('btn-prev').disabled = idx === 0;
+            if(idx === QUESTIONS.length - 1) {
+                document.getElementById('btn-next').classList.add('hidden');
+                document.getElementById('btn-submit').classList.remove('hidden');
+            } else {
+                document.getElementById('btn-next').classList.remove('hidden');
+                document.getElementById('btn-submit').classList.add('hidden');
+            }
+
+            // Restore selection
+            const val = examState.answers[idx];
+            resetRadio('radio-true');
+            resetRadio('radio-false');
+            if(val === true) setRadio('radio-true', 'green');
+            if(val === false) setRadio('radio-false', 'red');
+            
+            // Update Mini Dots
+            QUESTIONS.forEach((_, i) => {
+                const d = document.getElementById(`dot-${i}`);
+                if(i === idx) d.className = "w-3 h-3 rounded-full bg-blue-600 ring-2 ring-blue-200"; // Active
+                else if (examState.answers[i] !== null) d.className = "w-2 h-2 rounded-full bg-blue-400"; // Answered
+                else d.className = "w-2 h-2 rounded-full bg-gray-300"; // Empty
+            });
+        }
+
+        window.selectAnswer = async (val) => {
+            const idx = examState.currentIdx;
+            examState.answers[idx] = val;
+            
+            // Visual
+            resetRadio('radio-true'); resetRadio('radio-false');
+            if(val === true) setRadio('radio-true', 'green');
+            if(val === false) setRadio('radio-false', 'red');
+
+            // ** REALTIME SYNC **
+            // Debounce slightly in prod, but direct here for responsiveness
+            updateDoc(doc(studentsRef, currentStudent.id), {
+                answers: examState.answers,
+                currentQ: idx
+            });
+        };
+
+        function setRadio(id, color) {
+            const el = document.getElementById(id);
+            el.innerHTML = `<div class="w-3 h-3 bg-${color}-500 rounded-full"></div>`;
+            el.className = `w-6 h-6 rounded-full border-2 flex items-center justify-center mr-4 border-${color}-500`;
+            el.parentElement.className = `flex items-center p-4 border-2 rounded-lg cursor-pointer transition group select-none border-${color}-200 bg-${color}-50`;
+        }
+        
+        function resetRadio(id) {
+            const el = document.getElementById(id);
+            el.innerHTML = '';
+            el.className = `w-6 h-6 rounded-full border-2 border-gray-300 flex items-center justify-center mr-4`;
+            el.parentElement.className = `flex items-center p-4 border-2 border-gray-200 rounded-lg cursor-pointer hover:bg-gray-50 transition group select-none`;
+        }
+
+        document.getElementById('btn-prev').onclick = () => {
+            if(examState.currentIdx > 0) {
+                examState.currentIdx--;
+                renderQuestion();
+            }
+        };
+
+        document.getElementById('btn-next').onclick = () => {
+            if(examState.answers[examState.currentIdx] === null) return alert("กรุณาเลือกคำตอบก่อนไปข้อถัดไป");
+            if(examState.currentIdx < QUESTIONS.length - 1) {
+                examState.currentIdx++;
+                renderQuestion();
+                // Update remote currentQ marker
+                updateDoc(doc(studentsRef, currentStudent.id), { currentQ: examState.currentIdx });
+            }
+        };
+
+        document.getElementById('btn-submit').onclick = async () => {
+            if(examState.answers[examState.currentIdx] === null) return alert("กรุณาตอบข้อสุดท้าย");
+            if(!confirm("ยืนยันส่งคำตอบ?")) return;
+
+            let score = 0;
+            examState.answers.forEach((a, i) => { if(a === QUESTIONS[i].a) score++; });
+            const finalScore = (score / QUESTIONS.length) * 100;
+
+            await updateDoc(doc(studentsRef, currentStudent.id), {
+                answers: examState.answers,
+                score: finalScore,
+                status: 'submitted',
+                timeTaken: (Date.now() - currentStudent.startTime) / 1000
+            });
+
+            show('page-submitted');
+        };
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
